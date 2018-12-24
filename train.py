@@ -348,8 +348,8 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
 
-    # data_set_root = '/home/mxj/data/Cervix/Segmentation/first_batch_phase2_resize_600'
-    data_set_root = '/home/mxj/data/Cervix/Segmentation/second_batch'
+    data_set_root = '/home/mxj/data/Cervix/Segmentation/cervix_resize_600_segmentation'
+    # data_set_root = '/home/mxj/data/Cervix/Segmentation/second_batch'
     if args.class_weights is not None:
         class_weights = torch.FloatTensor(args.class_weights).cuda()
     else:
