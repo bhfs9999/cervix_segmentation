@@ -1,0 +1,6 @@
+/checkpoints
+/tensorboardX
+*.pth
+*.pyc
+__pycache__/
+/.idea

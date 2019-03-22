@@ -32,8 +32,9 @@ def valid_net(net, valid_dataloader, valid_strategy, tensor_writer):
     net.set_mode('valid')
     valid_iter = iter(valid_dataloader)
     valid_interval = len(valid_dataloader)
-    acc_counter, dice_counter, loss_counter = AverageMeter(), AverageMeter(), AverageMeter()
-    recall_counter = [AverageMeter() for i in range(valid_strategy['num_categories'])]
+    acc_counter, loss_counter = AverageMeter(), AverageMeter()
+    recall_counter = [AverageMeter() for _ in range(valid_strategy['num_categories'])]
+    dice_counter = [AverageMeter() for _ in range(valid_strategy['num_categories'])]
     valid_target_list, valid_predict_list = [], []
     valid_target_per_img_list, valid_predict_per_img_list = [], []
     for test_step in range(valid_interval):
@@ -60,14 +61,15 @@ def valid_net(net, valid_dataloader, valid_strategy, tensor_writer):
 
             # dice, acc = net.metric(masks_probs > valid_strategy['mask_threshold'], true_masks)
             result = net.metric(masks_probs, true_masks, valid_strategy['num_categories'], valid_strategy['mask_threshold'])
-            dice = result['dice']
+            dice = [0 if x==-1 else x for x in result['dice']]
             acc = result['acc']
-            recall = result['recall']
+            recall = [0 if x==-1 else x for x in result['recall']]
 
             acc_counter.update(acc, valid_strategy['batch_size'])
-            if dice is not None:
-                dice_counter.update(dice, valid_strategy['batch_size'])
             loss_counter.update(loss.item(), valid_strategy['batch_size'])
+            for i, counter in enumerate(dice_counter):
+                if dice[i] is not None:
+                    counter.update(dice[i], train_strategy['batch_size'])
             for i, counter in enumerate(recall_counter):
                 if recall[i] is not None:
                     recall_counter[i].update(recall[i], valid_strategy['batch_size'])
@@ -83,8 +85,8 @@ def valid_net(net, valid_dataloader, valid_strategy, tensor_writer):
     scalars += [acc_counter.avg]
     metric_names += ['acc_per_img']
     scalars += [acc_per_img]
-    metric_names += ['dice']
-    scalars += [dice_counter.avg]
+    metric_names += ['dice-{}'.format(cls) for cls in range(train_strategy['num_categories'])]
+    scalars += [counter.avg for counter in dice_counter]
     metric_names += ['recall-{}'.format(cls) for cls in range(valid_strategy['num_categories'])]
     scalars += [counter.avg for counter in recall_counter]
     metric_names += ['recall_per_img-{}'.format(cls) for cls in range(valid_strategy['num_categories'])]
@@ -93,12 +95,13 @@ def valid_net(net, valid_dataloader, valid_strategy, tensor_writer):
     scalars += [loss_counter.avg]
     tensor_writer.write_scalars(scalars, metric_names, valid_strategy['step'], tag='valid')
     print('='*20)
-    print('Validation: || Loss: %.4f || acc: %.4f || dice: %.4f' % \
-              (loss_counter.avg, acc_counter.avg, dice_counter.avg))
+    print('Validation: || Loss: %.4f || acc: %.4f || dice: %s' % \
+              (loss_counter.avg, acc_counter.avg,
+               ', '.join(['{:.4f}'.format(x.avg) for x in dice_counter])))
     print('='*20)
     return {
         'acc': acc_counter.avg,
-        'dice': dice_counter.avg,
+        'dice': [counter.avg for counter in dice_counter],
         'loss': loss_counter.avg,
         'recall': [counter.avg for counter in recall_counter]
     }
@@ -108,7 +111,7 @@ def train_net(net, dataloaders, train_strategy):
     parallel_tag = False
 
     dir_checkpoint = './checkpoints/{}/{}/{}/'.format(train_strategy['set_name'], train_strategy['data_type'], train_strategy['tag'])
-    dir_tensorboard = './tesnsorboardX/{}/{}/{}/'.format(train_strategy['set_name'], train_strategy['data_type'], datetime.now().strftime('%b%d_%H-%M-%S_') + train_strategy['tag'])
+    dir_tensorboard = './tensorboardX/{}/{}/{}/'.format(train_strategy['set_name'], train_strategy['data_type'], datetime.now().strftime('%b%d_%H-%M-%S_') + train_strategy['tag'])
 
     if not os.path.exists(dir_checkpoint):
         os.makedirs(dir_checkpoint)
@@ -153,8 +156,9 @@ def train_net(net, dataloaders, train_strategy):
     train_predict_per_img_list = []
     train_target_per_img_list = []
 
-    acc_counter, dice_counter, loss_counter = AverageMeter(), AverageMeter(), AverageMeter()
-    recall_counter = [AverageMeter()] * train_strategy['num_categories']
+    acc_counter, loss_counter = AverageMeter(), AverageMeter()
+    recall_counter = [AverageMeter() for _ in range(train_strategy['num_categories'])]
+    dice_counter = [AverageMeter() for _ in range(train_strategy['num_categories'])]
 
     for step in range(start_step, end_step + 1):
         net.set_mode('train')
@@ -200,9 +204,10 @@ def train_net(net, dataloaders, train_strategy):
         recall = result['recall']
 
         acc_counter.update(acc, train_strategy['batch_size'])
-        if dice is not None:
-            dice_counter.update(dice, train_strategy['batch_size'])
         loss_counter.update(loss.item(), train_strategy['batch_size'])
+        for i, counter in enumerate(dice_counter):
+            if dice[i] is not None:
+                counter.update(dice[i], train_strategy['batch_size'])
         for i, counter in enumerate(recall_counter):
             if recall[i] is not None:
                 counter.update(recall[i], train_strategy['batch_size'])
@@ -210,8 +215,8 @@ def train_net(net, dataloaders, train_strategy):
         if step % train_interval == 0:
             pstring = 'timer: %.4f sec.' % (t1 - t0)
             print(pstring)
-            pstring = 'iter ' + repr(step) + ' || Loss: %.4f || lr: %.5f || acc: %.4f || dice: %.4f' % \
-                      (loss.item(), learning_rate, acc, dice)
+            pstring = 'iter ' + repr(step) + ' || Loss: %.4f || lr: %.5f || acc: %.4f || dice: %s' % \
+                      (loss.item(), learning_rate, acc, ', '.join(['{:.4f}'.format(x) for x in dice]))
             print(pstring)
 
         # reset iter
@@ -230,8 +235,8 @@ def train_net(net, dataloaders, train_strategy):
             scalars += [acc_counter.avg]
             metric_names += ['acc_per_img']
             scalars += [acc_per_img]
-            metric_names += ['dice']
-            scalars += [dice_counter.avg]
+            metric_names += ['dice-{}'.format(cls) for cls in range(train_strategy['num_categories'])]
+            scalars += [counter.avg for counter in dice_counter]
             metric_names += ['recall-{}'.format(cls) for cls in range(train_strategy['num_categories'])]
             scalars += [counter.avg for counter in recall_counter]
             metric_names += ['recall_per_img-{}'.format(cls) for cls in range(train_strategy['num_categories'])]
@@ -242,12 +247,14 @@ def train_net(net, dataloaders, train_strategy):
             scalars += [learning_rate]
             tensor_writer.write_scalars(scalars, metric_names, step, tag='train')
             print('=' * 20)
-            print('Epoch %d ending, avg result: || Loss: %.4f || acc: %.4f || dice: %.4f' % \
-                  (step // len(train_dataloader), loss_counter.avg, acc_counter.avg, dice_counter.avg))
+            print('Epoch %d ending, avg result: || Loss: %.4f || acc: %.4f || dice: %s' % \
+                  (step // len(train_dataloader), loss_counter.avg, acc_counter.avg,
+                   ', '.join(['{:.4f}'.format(x.avg) for x in dice_counter])))
 
             # reset counters
-            acc_counter, dice_counter, loss_counter = AverageMeter(), AverageMeter(), AverageMeter()
-            recall_counter = [AverageMeter()] * train_strategy['num_categories']
+            acc_counter, loss_counter = AverageMeter(), AverageMeter()
+            recall_counter = [AverageMeter() for _ in range(train_strategy['num_categories'])]
+            dice_counter = [AverageMeter() for _ in range(train_strategy['num_categories'])]
             train_predict_list, train_target_list = [], []
 
         if step % eval_interval == 0 and step != start_step:
@@ -259,9 +266,11 @@ def train_net(net, dataloaders, train_strategy):
             }
             valid_result = valid_net(net, valid_dataloader, valid_strategy, tensor_writer)
 
+            # todo more generate
+            valid_dice = valid_result['dice'][2]
             # save best checkpoint, the metric is weighted f1 score
-            if valid_result['dice'] > best_valid_dice:
-                best_valid_dice = valid_result['dice']
+            if valid_dice > best_valid_dice:
+                best_valid_dice = valid_dice
                 print('Saving best valid dice state, iter:', step)
                 save_model(net, optimizer, dir_checkpoint, 'best_valid_dice_checkpoint.pth', step, learning_rate, parallel_tag)
 
@@ -291,6 +300,14 @@ def train_net(net, dataloaders, train_strategy):
 def get_args():
     parser = argparse.ArgumentParser()
     # Training setting
+    parser.add_argument('--train_set', dest='train_set',
+                        type=str, default='train',
+                        choices=['train', 'train_pos'],
+                        help='which train data set to use')
+    parser.add_argument('--valid_set', dest='valid_set',
+                        type=str, default='valid',
+                        choices=['valid', 'valid_pos'],
+                        help='which valid data set to use')
     parser.add_argument('--epochs', dest='epochs', type=int,
                       help='number of epochs')
     parser.add_argument('--batch_size', dest='batch_size', default=8,
@@ -385,10 +402,10 @@ if __name__ == '__main__':
         parallel_tag = True
     # cudnn.benchmark = True # faster convolutions, but more memory
 
-    train_dataset = Cervix(root=data_set_root, data_set_type='train', transform=get_train_augmentation, data_type=args.data_type, tf_learning=True)
+    train_dataset = Cervix(root=data_set_root, data_set_type=args.train_set, transform=get_train_augmentation, data_type=args.data_type, tf_learning=True)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4,
                                   collate_fn=train_dataset.classify_collate, drop_last=True)
-    valid_dataset = Cervix(root=data_set_root, data_set_type='valid', transform=get_valid_normalization, data_type=args.data_type, tf_learning=True)
+    valid_dataset = Cervix(root=data_set_root, data_set_type=args.valid_set, transform=get_valid_normalization, data_type=args.data_type, tf_learning=True)
     valid_dataloader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2,
                                   collate_fn=valid_dataset.classify_collate, drop_last=False)
 

@@ -55,39 +55,47 @@ def accuracy_and_dice(input, target, num_classes, negative_thresh):
     input = input.unsqueeze(1)
     target = target.unsqueeze(1)
 
-    valid_num = 0
     ac = 0.
     recall = np.array([0.] * num_classes)
-    total_num = 0
+    total_num = np.array([0] * num_classes)
     if input.is_cuda:
-        s = torch.FloatTensor(1).cuda().zero_()
+        s = torch.tensor([0.]*num_classes).cuda()
     else:
-        s = torch.FloatTensor(1).zero_()
+        s = torch.tensor([0.]*num_classes)
 
-    for i, c in enumerate(zip(input, target)):
+    for c in zip(input, target):
         # print(c[0].size())
         # print(c[1].size())
-        ac += metrics.accuracy_score(c[1].view(-1).cpu().numpy(), c[0].view(-1).cpu().numpy())
-        recall += np.array([metrics.recall_score(c[1].view(-1).cpu().numpy(), c[0].view(-1).cpu().numpy(), average='macro', labels=[cls])
-                        for cls in range(num_classes)])
-        total_num += 1
-        if c[1].max().data < 1.:
-            continue
-        s = s + DiceCoeff().forward(c[0].float(), c[1].float())
-        valid_num += 1
+        pred = c[0]
+        gt = c[1]
+        ac += metrics.accuracy_score(gt.view(-1).cpu().numpy(), pred.view(-1).cpu().numpy())
+        recall += np.array([metrics.recall_score(gt.view(-1).cpu().numpy(), pred.view(-1).cpu().numpy(),
+                                                 average='macro', labels=[cls]) for cls in range(num_classes)])
+        if input.is_cuda:
+            gt_onthot = torch.zeros(num_classes, gt.shape[1], gt.shape[2]).cuda().scatter_(0, gt, 1)
+            pred_onehot = torch.zeros(num_classes, gt.shape[1], gt.shape[2]).cuda().scatter_(0, pred, 1)
+        else:
+            gt_onthot = torch.zeros(num_classes, gt.shape[1], gt.shape[2]).scatter_(0, gt, 1)
+            pred_onehot = torch.zeros(num_classes, gt.shape[1], gt.shape[2]).scatter_(0, pred, 1)
+        for i in range(num_classes):
+            # have no this class
+            if len(gt[gt==i]) == 0:
+                continue
 
-    acc_avg = ac / total_num
-    recall[0] = recall[0] / total_num
-    recall_avg = recall.tolist()
+            s[i] += DiceCoeff().forward(pred_onehot[i].float(), gt_onthot[i].float())
+            total_num[i] += 1
 
-    if valid_num == 0:
-        # dice_avg = None
-        # recall_avg[1] = None
-        dice_avg = -1
-        recall_avg[1] = -1
-    else:
-        dice_avg = s.item() / valid_num
-        recall_avg[1] /= valid_num
+    acc_avg = ac / total_num[0]
+    recall = recall.tolist()
+    recall_avg = [0.] * num_classes
+    dice_avg = [0.] * num_classes
+    for i, num in enumerate(total_num):
+        if num == 0:
+            recall_avg[i] = -1
+            dice_avg[i] = -1
+        else:
+            recall_avg[i] = recall[i] / num
+            dice_avg[i] = s[i].item() / num
 
     # return dice_avg, acc_avg, recall_avg
     return {

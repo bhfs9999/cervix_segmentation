@@ -45,7 +45,6 @@ class FocalLoss2d(nn.Module):
     def forward(self, logit, target, class_weight=None):
         target = target.view(-1, 1).long()
 
-
         if self.activation=='sigmoid':
             if class_weight is None:
                 class_weight = [1]*2 #[0.5, 0.5]
@@ -84,33 +83,34 @@ class FocalLoss2d(nn.Module):
 
 class RobustFocalLoss2d(nn.Module):
     #assume top 10% is outliers
-    def __init__(self, activation='sigmoid', weight=None, gamma=2, size_average=True):
+    def __init__(self, activation='softmax', weight=None, gamma=2, size_average=True):
         super(RobustFocalLoss2d, self).__init__()
         self.gamma = gamma
         self.size_average = size_average
         self.activation = activation
         if weight is not None:
+            weight = weight / max(weight)
             weight = weight.cpu()
         self.class_weight = weight
 
 
     def forward(self, logit, target):
         target = target.view(-1, 1).long()
+        B, C, H, W = logit.size()
 
-        if self.activation=='sigmoid':
+        if self.activation == 'sigmoid':
+            assert C==2, 'sigmoid can only use with 2 classes'
             if self.class_weight is None:
                 class_weight = [1]*2 #[0.5, 0.5]
             else:
                 class_weight = self.class_weight
-
             prob   = F.sigmoid(logit)
             prob   = prob.view(-1, 1)
             prob   = torch.cat((1-prob, prob), 1)
             select = torch.FloatTensor(len(prob), 2).zero_().cuda()
             select.scatter_(1, target, 1.)
 
-        elif  self.activation=='softmax':
-            B,C,H,W = logit.size()
+        elif self.activation == 'softmax':
             if self.class_weight is None:
                 class_weight =[1]*C #[1/C]*C
             else:

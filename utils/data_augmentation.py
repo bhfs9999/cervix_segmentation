@@ -1,4 +1,4 @@
-from utils.transforms import *
+from .transforms import *
 
 def get_train_augmentation(mean, std, up_rate=2, target_size=256):
     return  Compose(

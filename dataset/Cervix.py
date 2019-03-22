@@ -18,7 +18,7 @@ type_mapping = {
 }
 
 # all_mask_mapping = np.array([0, 1, 1, 1])
-all_mask_mapping = np.array([0, 1, 1, 0])
+all_mask_mapping = np.array([0, 1, 2, 0])
 
 class Cervix(Dataset):
     def __init__(self, root, data_set_type, transform, data_type=None, tf_learning=True, test_mode=False):

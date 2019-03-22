@@ -4,7 +4,7 @@ import math
 import random
 import torch
 
-from albumentations import ElasticTransform
+# from albumentations import ElasticTransform
 
 
 class Compose(object):

@@ -17,7 +17,7 @@ from sklearn import metrics
 
 label_map = np.array([[0, 0, 0], [84, 255, 159], [100, 149, 237], [255, 187, 255]])
 # mask_mapping = np.array([0, 1, 1, 1])
-mask_mapping = np.array([0, 1, 1, 0])
+mask_mapping = np.array([0, 1, 2, 0])
 
 def predict_img(net, img, mask, test_strategy, meta_info):
     true_mask = mask
@@ -57,10 +57,10 @@ def predict_img(net, img, mask, test_strategy, meta_info):
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--set', dest='set',
-                        type=str, default='test',
-                        choices=['train', 'valid', 'test'],
-                        help='which data set to use')
+    parser.add_argument('--test_set', dest='test_set',
+                        type=str, default='train',
+                        choices=['test', 'test_pos'],
+                        help='which train data set to use')
     parser.add_argument('--batch_size', dest='batch_size', default=1,
                       type=int, help='batch size')
     parser.add_argument('--mask_threshold', '-t', type=float,
@@ -93,7 +93,7 @@ def get_args():
                         help='Whether to save mask in phase1 to assist classification')
     parser.add_argument('--no_gt', dest='no_gt', action='store_true', default=False,
                         help='Whether to use gt to get metrics')
-    parser.add_argument('--model', dest='model', type=str, default='best_valid',
+    parser.add_argument('--model', dest='model', type=str, default='best_valid_dice',
                         help='the checkpoint name which to be loaded')
     parser.add_argument('--phase', dest='phase', action='store_true', default=False,
                         help='Whether to save phase1 result')
@@ -128,7 +128,7 @@ def get_output_filenames(out_path, args):
 def mask_to_image(mask):
     return Image.fromarray((mask).astype(np.uint8))
 
-def save_mask_and_gt(ori_img, mask_gt, mask, output_path):
+def save_mask_and_gt(ori_img, mask_gt, mask, output_path, num_cls):
     '''
 
     :param mask_gt: origin mask ground truth
@@ -144,19 +144,22 @@ def save_mask_and_gt(ori_img, mask_gt, mask, output_path):
 
     ori_h, ori_w = mask_gt.shape[:2]
     final_output = np.zeros((ori_h, 2 * ori_w + 10, 3), dtype=np.uint8)
+    color = [(), (84, 255, 159), (171, 0, 96)]
+    for i in range(1, num_cls):
+        mask_gti = (mask_gt == i).astype(np.uint8)
+        _, thresh = cv2.threshold(mask_gti, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        contours, hierarchy = cv2.findContours(thresh, 3, 2)
+        cv2.drawContours(gt_image, contours, -1, color[i], 2)
+        # cnt = contours[0]
+        # approx = cv2.approxPolyDP(cnt, 3, True)
+        # cv2.polylines(gt_image, [approx], True, (84, 255, 159), 2)
 
-    _, thresh = cv2.threshold(mask_gt, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    image, contours, hierarchy = cv2.findContours(thresh, 3, 2)
-    cv2.drawContours(gt_image, contours, -1, (84, 255, 159), 2)
-    # cnt = contours[0]
-    # approx = cv2.approxPolyDP(cnt, 3, True)
-    # cv2.polylines(gt_image, [approx], True, (84, 255, 159), 2)
+        maski = (mask == i).astype(np.uint8)
+        _, thresh = cv2.threshold(maski, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        contours, hierarchy = cv2.findContours(thresh, 3, 2)
+        cv2.drawContours(pred_image, contours, -1, color[i], 2)
+
     final_output[:, 0:ori_w, :] = gt_image
-
-    _, thresh = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    image, contours, hierarchy = cv2.findContours(thresh, 3, 2)
-    cv2.drawContours(pred_image, contours, -1, (84, 255, 159), 2)
-
     # cnt = contours[0]
     # approx = cv2.approxPolyDP(cnt, 3, True)
     # cv2.polylines(pred_image, [approx], True, (84, 255, 159), 2)
@@ -222,13 +225,14 @@ if __name__ == "__main__":
         phase_name = 'phase1_plus'
 
     # data_set_root = '/home/mxj/data/Cervix/Segmentation/first_batch_phase2_resize_600'
-    data_set_root = '/home/mxj/data/Cervix/Segmentation/second_batch'
+    data_set_root = '/data/mxj/Cervix/Segmentation/cervix_resize_600_segmentation'
     net = unet34(num_classes=args.num_classes, criterion=args.loss, activation=args.activation)
 
-    model_path = './checkpoints/second_batch/{}/Focal_loss_1_20_transfer_neg_InNeg_run1'.format(args.data_type)
+    model_path = './checkpoints/cervix_resize_600_segmentation/{}/' \
+                 'cross_entropy_1_10_10_transfer_pos_cls3_1_10_10_mar14new'.format(args.data_type)
     model_name = '{}_checkpoint.pth'.format(args.model)
     model_file = os.path.join(model_path, model_name)
-    output_path = os.path.join(model_path, '{}_demo'.format(args.set))
+    output_path = os.path.join(model_path, '{}_demo'.format(args.test_set))
 
     assert args.save_phase * args.save_mask == False
     if args.save_phase:
@@ -255,7 +259,7 @@ if __name__ == "__main__":
         net = torch.nn.DataParallel(net, device_ids=args.gpus)
         parallel_tag = True
 
-    test_dataset = Cervix(root=data_set_root, data_set_type=args.set, transform=get_valid_normalization,
+    test_dataset = Cervix(root=data_set_root, data_set_type=args.test_set, transform=get_valid_normalization,
                           data_type=args.data_type, tf_learning=True, test_mode=True)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2,
                                   collate_fn=test_dataset.classify_collate, drop_last=False)
@@ -289,6 +293,7 @@ if __name__ == "__main__":
     recall_metrics = np.array(recall_metrics, dtype=np.float32)
     test_predict_per_img_list = []
     test_target_per_img_list = []
+    dice_lists = []
 
     for i, batch in enumerate(test_dataloader):
         img = batch[0]
@@ -300,7 +305,7 @@ if __name__ == "__main__":
         else:
             true_mask = None
             meta_info = batch[1]
-        print("\nPredicting image {}/{} ...".format(i+1, len(test_dataloader)))
+        print("Predicting image {}/{} ...".format(i+1, len(test_dataloader)))
         if args.batch_size == 1:
             meta_info = meta_info[0]
         mask, result = predict_img(net=net,
@@ -308,7 +313,8 @@ if __name__ == "__main__":
                            mask=true_mask,
                            test_strategy=test_strategy,
                            meta_info=meta_info)
-        dice_list = [result['dice']]
+        dice_list = result['dice']
+        dice_lists.append(dice_list)
         acc = result['acc']
         recall_list = result['recall']
         # test_predict_per_img_list.extend([pred.astype(np.uint8) for pred in ((mask.reshape(-1) > 0).sum() > test_strategy['neg_thresh'])])
@@ -360,12 +366,12 @@ if __name__ == "__main__":
                 else:
                     recall_metrics[i] += item
 
+        if args.draw:
             mask_gt = Image.open(meta_info['mask_path'])
             # if meta_info[0]['bbox'] is not None:
             #     mask_gt = mask_gt.crop(meta_info[0]['bbox'])
             mask_gt = np.array(mask_gt, dtype=np.int64)
 
-        if args.draw:
             if args.save_phase:
                 ori_img = np.array(Image.open(meta_info['img_path']), dtype=np.uint8)
                 save_phase1_mask(mask_gt, mask, ori_img, out_img, out_mask)
@@ -380,7 +386,7 @@ if __name__ == "__main__":
                     raise ValueError
                 ori_img = Image.open(meta_info['img_path'])
                 ori_img = np.array(ori_img, dtype=np.uint8)
-                save_mask_and_gt(ori_img, mask_gt, mask, out_file)
+                save_mask_and_gt(ori_img, mask_gt, mask, out_file, args.num_classes)
 
     if not args.save_mask:
         dice_metrics /= np.array(dice_valid_mask, dtype=np.float32)
